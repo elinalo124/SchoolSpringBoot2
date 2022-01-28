@@ -4,10 +4,14 @@ import com.elina.school.exception.NotFoundException;
 import com.elina.school.model.*;
 import com.elina.school.repository.*;
 import com.elina.school.service.*;
+import net.javacrumbs.shedlock.spring.annotation.SchedulerLock;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.scheduling.annotation.Async;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -21,6 +25,7 @@ public class CourseServiceImpl implements CourseService{
     private EnrollmentRepository enrollmentRepository;
     private ProfessorRepository professorRepository;
     private StudentRepository studentRepository;
+    private StatusRespository statusRespository;
     private AptitudeService aptitudeService;
     private CourseService courseService;
     private EnrollmentService enrollmentService;
@@ -48,6 +53,10 @@ public class CourseServiceImpl implements CourseService{
         this.studentRepository = studentRepository;
     }
     @Autowired
+    public void setStatusRespository(StatusRespository statusRespository) {
+        this.statusRespository = statusRespository;
+    }
+    @Autowired
     public void setAptitudeService(AptitudeService aptitudeService) {
         this.aptitudeService = aptitudeService;
     }
@@ -68,6 +77,30 @@ public class CourseServiceImpl implements CourseService{
         this.studentService = studentService;
     }
 
+    /*SCHEDULED METHOD*/
+    //UPDATE STATUS FOR COURSES BASED ON DATES
+    //@SchedulerLock(name = "myscheduledTask")
+    //@Scheduled(fixedRate = 10000) //10s
+    //@Async
+    //@Scheduled(cron = "@hourly")
+    @Scheduled(fixedDelay = 2000)
+    //@Scheduled(fixedRate = 3000)
+    public void refreshStatus(){
+        System.out.println("Running scheduled method");
+        for (Course course : courseService.findAll()){
+            if(course.getStartDate().isAfter(LocalDateTime.now()))
+                course.setStatus(statusRespository.findByName("Not Started"));
+            if(course.getStartDate().isBefore(LocalDateTime.now()) && course.getEndDate().isAfter(LocalDateTime.now()))
+                course.setStatus(statusRespository.findByName("In Progress"));
+            if(course.getEndDate().isBefore(LocalDateTime.now())&&(course.getStatus()!=statusRespository.findByName("Completed")))
+                course.setStatus(statusRespository.findByName("Ended"));
+            courseService.save(course);
+        }
+
+
+    }
+
+    /*CONTROLLER METHODS*/
     @Override
     public void save(Course course){
         courseRepository.save(course);
@@ -201,10 +234,20 @@ public class CourseServiceImpl implements CourseService{
     @Override
     public void updateGrade(Long courseId, Long studentId, Integer grade) {
         Enrollment enrollmentToUpdate = enrollmentRepository.findEnrollmentByCourse_IdAndStudent_Id(courseId, studentId);
-
-        if((courseService.findById(courseId).getStatus().getName()=="Not Started")){
+        Course courseToUpdate = courseService.findById(courseId);
+        if((courseService.findById(courseId).getStatus().getName()=="Ended")){
             enrollmentToUpdate.setGrade(grade);
             enrollmentRepository.save(enrollmentToUpdate);
+        }
+        int pendingGradeCounter = 0;
+        for(Enrollment enrollmentFromCourse : courseToUpdate.getEnrollments() ){
+            if(enrollmentFromCourse.getGrade()==null){
+                pendingGradeCounter++;
+            }
+        }
+        if (pendingGradeCounter!=0){
+            courseToUpdate.setStatus(statusRespository.findByName("Completed"));
+            courseService.save(courseToUpdate);
         }
     }
 }
